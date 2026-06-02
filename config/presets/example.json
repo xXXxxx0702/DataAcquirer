@@ -1,0 +1,22 @@
+{
+  "host": "192.168.22.9",
+  "port": 30886,
+  "username": "admin",
+  "password": "admin1234",
+  "database": "raw_tenant_industry_brain",
+  "start_time": "2026-05-30 15:00:00",
+  "end_time": "2026-06-01 15:00:00",
+  "chunk_hours": 24,
+  "utc_offset_hours": 8,
+  "value_field": "value",
+  "measure_tag": "measurePoint",
+  "output_path": "output/武昌5#炉一级减温水两天数据.csv",
+  "points": [
+    {"name": "B5_YJJWCKWD1", "measurement": "Float", "note": "一级减温器出口温度 左", "enabled": true},
+    {"name": "B5_YJJWCKWD2", "measurement": "Float", "note": "一级减温器出口温度 右", "enabled": true},
+    {"name": "B5_ZQWD", "measurement": "Float", "note": "主汽温度", "enabled": true},
+    {"name": "B5_ZQWD_SET", "measurement": "Float", "note": "主汽温度设定值", "enabled": true},
+    {"name": "B5_YJJW_AUTO", "measurement": "Bool", "note": "一级减温水自动投入标志", "enabled": true},
+    {"name": "B5_ZZQLL", "measurement": "Float", "note": "主汽流量", "enabled": true}
+  ]
+}

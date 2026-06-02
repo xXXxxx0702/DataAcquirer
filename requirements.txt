@@ -1,0 +1,4 @@
+# DataAcquirer runtime dependencies
+# GUI uses Tkinter, which ships with the standard CPython installer (no entry here).
+influxdb>=5.3.1
+pandas>=1.3

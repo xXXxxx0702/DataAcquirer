@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Output data
+output/
+*.csv
+
+# User presets (keep the example, ignore the rest)
+config/presets/*.json
+!config/presets/example.json
+
+# IDE / OS
+.idea/
+.vscode/
+.claude/
+.DS_Store
+Thumbs.db
