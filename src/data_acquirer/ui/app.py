@@ -5,8 +5,9 @@ from __future__ import annotations
 import datetime
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
+from ..bookmarks import BookmarkStore, ServerBookmark
 from ..config import AcquireConfig
 from .points_table import PointsTable
 from .worker import (
@@ -21,8 +22,18 @@ from .worker import (
     PullWorker,
 )
 
-PRESETS_DIR = Path(__file__).resolve().parents[3] / "config" / "presets"
+CONFIG_DIR = Path(__file__).resolve().parents[3] / "config"
+PRESETS_DIR = CONFIG_DIR / "presets"
+LAST_SESSION_PATH = CONFIG_DIR / "last_session.json"
+BOOKMARKS_PATH = CONFIG_DIR / "bookmarks.json"
 _POLL_MS = 100
+
+# Fields that define the connection; changing any of them triggers a re-test.
+CONNECTION_KEYS = ("host", "port", "username", "password", "database")
+
+# Time quick-range buttons: (label, days-back-from-now).
+RECENT_RANGES = (("近1天", 1), ("近2天", 2), ("近7天", 7), ("近14天", 14), ("近30天", 30))
+_TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
 
 class App(ttk.Frame):
@@ -35,14 +46,28 @@ class App(ttk.Frame):
         self._conn_worker: ConnectionTestWorker | None = None
         self._catalog_worker: CatalogWorker | None = None
 
+        self.bookmarks = BookmarkStore(BOOKMARKS_PATH)
+        self._conn_silent = False            # current test suppresses popups?
+        self._catalog_silent = False         # current catalog load suppresses popups?
+        self._last_conn_signature: tuple | None = None  # last connection we tested
+        self._retest_after_id: str | None = None        # debounce handle
+
+        self._startup_note = ""
         self._build_widgets()
-        self._load_into_widgets(self._default_config())
+        self._load_into_widgets(self._load_startup_config())
+        if self._startup_note:
+            self._append_log(self._startup_note)
+
+        # Persist the session on close, and auto-test the (restored) connection.
+        master.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.after(300, lambda: self._start_conn_test(silent=True, force=True))
 
     # ------------------------------------------------------------------ #
     # Layout
     # ------------------------------------------------------------------ #
     def _build_widgets(self) -> None:
         self.vars: dict[str, tk.Variable] = {}
+        self.entries: dict[str, ttk.Entry] = {}
 
         # --- Connection ---
         conn = ttk.LabelFrame(self, text="连接配置", padding=8)
@@ -53,8 +78,31 @@ class App(ttk.Frame):
         self._add_entry(conn, "username", "用户名", 1, 0, width=18)
         self._add_entry(conn, "password", "密码", 1, 2, width=18, show="*")
         ttk.Button(conn, text="测试连接", command=self.on_test_connection).grid(
-            row=1, column=4, columnspan=2, sticky="e", padx=4, pady=2
+            row=1, column=4, sticky="e", padx=4, pady=2
         )
+        self.conn_status = ttk.Label(conn, text="●  未连接", foreground="#999")
+        self.conn_status.grid(row=1, column=5, sticky="w", padx=4)
+
+        # Server bookmarks row.
+        ttk.Label(conn, text="服务器书签").grid(row=2, column=0, sticky="e", padx=(4, 2), pady=(6, 2))
+        self.bookmark_var = tk.StringVar()
+        self.bookmark_combo = ttk.Combobox(
+            conn, textvariable=self.bookmark_var, state="readonly", width=28
+        )
+        self.bookmark_combo.grid(row=2, column=1, columnspan=2, sticky="w", pady=(6, 2))
+        self.bookmark_combo.bind("<<ComboboxSelected>>", self._on_bookmark_selected)
+        ttk.Button(conn, text="保存为书签…", command=self.on_save_bookmark).grid(
+            row=2, column=3, sticky="w", padx=4, pady=(6, 2)
+        )
+        ttk.Button(conn, text="删除书签", command=self.on_delete_bookmark).grid(
+            row=2, column=4, sticky="w", pady=(6, 2)
+        )
+        self._refresh_bookmarks()
+
+        # Re-test the connection automatically when a connection field changes.
+        for key in CONNECTION_KEYS:
+            self.entries[key].bind("<FocusOut>", self._on_conn_field_changed)
+            self.entries[key].bind("<Return>", self._on_conn_field_changed)
 
         # --- Time window & behaviour ---
         tf = ttk.LabelFrame(self, text="时间范围与行为", padding=8)
@@ -69,15 +117,27 @@ class App(ttk.Frame):
         self._add_entry(tf, "value_field", "取值字段", 1, 4, width=12)
         self._add_entry(tf, "measure_tag", "点位标签", 1, 6, width=14)
 
+        quick = ttk.Frame(tf)
+        quick.grid(row=2, column=0, columnspan=8, sticky="w", pady=(6, 0))
+        ttk.Label(quick, text="快捷范围：").pack(side="left")
+        for label, days in RECENT_RANGES:
+            ttk.Button(
+                quick, text=label, width=7,
+                command=lambda d=days: self._set_recent_days(d),
+            ).pack(side="left", padx=2)
+        ttk.Label(quick, text="（结束=当前时间，开始=往前推 N 天）", foreground="#666").pack(
+            side="left", padx=6
+        )
+
         # --- Points ---
         pf = ttk.LabelFrame(self, text="点位列表", padding=8)
         pf.pack(fill="both", expand=True, pady=(8, 0))
 
         catbar = ttk.Frame(pf)
         catbar.pack(fill="x", pady=(0, 6))
-        self.catalog_btn = ttk.Button(catbar, text="加载点位目录", command=self.on_load_catalog)
+        self.catalog_btn = ttk.Button(catbar, text="刷新点位目录", command=self.on_load_catalog)
         self.catalog_btn.pack(side="left")
-        self.catalog_label = ttk.Label(catbar, text="未加载点位目录（加载后输入点位可自动联想）", foreground="#666")
+        self.catalog_label = ttk.Label(catbar, text="连接成功后将自动加载点位目录以启用联想", foreground="#666")
         self.catalog_label.pack(side="left", padx=8)
 
         self.points_table = PointsTable(pf)
@@ -115,13 +175,14 @@ class App(ttk.Frame):
         self.log.pack(side="left", fill="both", expand=True)
         log_sb.pack(side="right", fill="y")
 
-    def _add_entry(self, parent, key, label, row, col, width=20, show=None) -> None:
+    def _add_entry(self, parent, key, label, row, col, width=20, show=None) -> ttk.Entry:
         ttk.Label(parent, text=label).grid(row=row, column=col, sticky="e", padx=(4, 2), pady=2)
         var = tk.StringVar()
         self.vars[key] = var
-        ttk.Entry(parent, textvariable=var, width=width, show=show).grid(
-            row=row, column=col + 1, sticky="w", padx=(0, 8), pady=2
-        )
+        entry = ttk.Entry(parent, textvariable=var, width=width, show=show)
+        entry.grid(row=row, column=col + 1, sticky="w", padx=(0, 8), pady=2)
+        self.entries[key] = entry
+        return entry
 
     # ------------------------------------------------------------------ #
     # Config <-> widgets
@@ -136,6 +197,27 @@ class App(ttk.Frame):
             PointSpec("B5_YJJW_AUTO", "Bool", "一级减温水自动投入标志"),
         ]
         return cfg
+
+    def _load_startup_config(self) -> AcquireConfig:
+        """Restore the config saved at last shutdown; fall back to defaults."""
+        if LAST_SESSION_PATH.exists():
+            try:
+                cfg = AcquireConfig.load(LAST_SESSION_PATH)
+                self._startup_note = f"已恢复上次会话配置: {LAST_SESSION_PATH}"
+                return cfg
+            except Exception as exc:
+                self._startup_note = f"无法读取上次会话配置 ({exc})，使用默认配置"
+        else:
+            self._startup_note = "首次启动，使用默认配置"
+        return self._default_config()
+
+    def _on_close(self) -> None:
+        """Persist the current config so the next launch restores it."""
+        try:
+            self._config_from_widgets().save(LAST_SESSION_PATH)
+        except Exception:
+            pass  # never block shutdown on a save failure
+        self.master.destroy()
 
     def _load_into_widgets(self, cfg: AcquireConfig) -> None:
         for key, var in self.vars.items():
@@ -178,6 +260,77 @@ class App(ttk.Frame):
     # ------------------------------------------------------------------ #
     # Button handlers
     # ------------------------------------------------------------------ #
+    def _set_recent_days(self, days: int) -> None:
+        now = datetime.datetime.now()
+        start = now - datetime.timedelta(days=days)
+        self.vars["end_time"].set(now.strftime(_TIME_FMT))
+        self.vars["start_time"].set(start.strftime(_TIME_FMT))
+        self._append_log(f"时间范围已设为近 {days} 天: {self.vars['start_time'].get()} ~ {self.vars['end_time'].get()}")
+
+    # ------------------------------------------------------------------ #
+    # Server bookmarks
+    # ------------------------------------------------------------------ #
+    def _refresh_bookmarks(self, select: str | None = None) -> None:
+        names = self.bookmarks.names()
+        self.bookmark_combo.configure(values=names)
+        if select and select in names:
+            self.bookmark_var.set(select)
+        elif self.bookmark_var.get() not in names:
+            self.bookmark_var.set("")
+
+    def _on_bookmark_selected(self, _event=None) -> None:
+        bm = self.bookmarks.get(self.bookmark_var.get())
+        if bm is None:
+            return
+        self.vars["host"].set(bm.host)
+        self.vars["port"].set(str(bm.port))
+        self.vars["username"].set(bm.username)
+        self.vars["password"].set(bm.password)
+        self.vars["database"].set(bm.database)
+        self._append_log(f"已切换到服务器书签: {bm.name}")
+        self._start_conn_test(silent=True, force=True)
+
+    def on_save_bookmark(self) -> None:
+        default = self.bookmark_var.get() or f"{self.vars['host'].get()}:{self.vars['port'].get()}"
+        name = simpledialog.askstring("保存为书签", "书签名称：", initialvalue=default, parent=self)
+        if not name:
+            return
+        name = name.strip()
+        if not name:
+            return
+        if self.bookmarks.get(name) and not messagebox.askyesno(
+            "覆盖书签", f"书签 “{name}” 已存在，是否覆盖？"
+        ):
+            return
+
+        def as_int(key, default):
+            try:
+                return int(str(self.vars[key].get()).strip())
+            except ValueError:
+                return default
+
+        self.bookmarks.upsert(
+            ServerBookmark(
+                name=name,
+                host=self.vars["host"].get().strip(),
+                port=as_int("port", 8086),
+                username=self.vars["username"].get(),
+                password=self.vars["password"].get(),
+                database=self.vars["database"].get().strip(),
+            )
+        )
+        self._refresh_bookmarks(select=name)
+        self._append_log(f"已保存服务器书签: {name}")
+
+    def on_delete_bookmark(self) -> None:
+        name = self.bookmark_var.get()
+        if not name:
+            return
+        if messagebox.askyesno("删除书签", f"确定删除书签 “{name}” 吗？"):
+            self.bookmarks.remove(name)
+            self._refresh_bookmarks()
+            self._append_log(f"已删除服务器书签: {name}")
+
     def on_browse_output(self) -> None:
         path = filedialog.asksaveasfilename(
             title="选择输出 CSV 文件",
@@ -188,19 +341,45 @@ class App(ttk.Frame):
         if path:
             self.vars["output_path"].set(path)
 
+    def _connection_signature(self) -> tuple:
+        return tuple(str(self.vars[k].get()).strip() for k in CONNECTION_KEYS)
+
     def on_test_connection(self) -> None:
+        # Manual button: always test, and show popups on failure.
+        self._start_conn_test(silent=False, force=True)
+
+    def _on_conn_field_changed(self, _event=None) -> None:
+        # Debounce: a focus-out followed quickly by another shouldn't fire twice.
+        if self._retest_after_id is not None:
+            self.after_cancel(self._retest_after_id)
+        self._retest_after_id = self.after(400, self._auto_retest)
+
+    def _auto_retest(self) -> None:
+        self._retest_after_id = None
+        if self._connection_signature() == self._last_conn_signature:
+            return  # connection unchanged since last test
+        self._start_conn_test(silent=True, force=True)
+
+    def _start_conn_test(self, *, silent: bool, force: bool = False) -> None:
         if self._conn_worker and self._conn_worker.running:
             return
+        signature = self._connection_signature()
+        if not force and signature == self._last_conn_signature:
+            return
+        self._last_conn_signature = signature
+        self._conn_silent = silent
         cfg = self._config_from_widgets()
+        self.conn_status.configure(text="●  连接中…", foreground="#c08000")
         self._append_log(f"正在测试连接 {cfg.host}:{cfg.port} / {cfg.database} …")
         self._conn_worker = ConnectionTestWorker(cfg)
         self._conn_worker.start()
         self.after(_POLL_MS, self._poll_conn)
 
-    def on_load_catalog(self) -> None:
+    def on_load_catalog(self, *, silent: bool = False) -> None:
         if self._catalog_worker and self._catalog_worker.running:
             return
         cfg = self._config_from_widgets()
+        self._catalog_silent = silent
         self.catalog_btn.configure(state="disabled")
         self.catalog_label.configure(text="正在加载点位目录…")
         self._append_log(f"正在从 {cfg.host}:{cfg.port}/{cfg.database} 加载点位目录…")
@@ -278,9 +457,15 @@ class App(ttk.Frame):
         for msg in self._drain(worker):
             if isinstance(msg, LogMsg):
                 self._append_log(msg.text)
+            elif isinstance(msg, DoneMsg):
+                # Connection OK -> auto-load the catalog to enable autocomplete.
+                self.conn_status.configure(text="●  已连接", foreground="#2e7d32")
+                self.on_load_catalog(silent=True)
             elif isinstance(msg, ErrorMsg):
                 self._append_log(msg.text)
-                messagebox.showerror("连接失败", msg.text)
+                self.conn_status.configure(text="●  连接失败", foreground="#c62828")
+                if not self._conn_silent:
+                    messagebox.showerror("连接失败", msg.text)
         if worker.running:
             self.after(_POLL_MS, self._poll_conn)
 
@@ -299,7 +484,8 @@ class App(ttk.Frame):
             elif isinstance(msg, ErrorMsg):
                 self._append_log(msg.text)
                 self.catalog_label.configure(text="点位目录加载失败")
-                messagebox.showerror("加载失败", msg.text)
+                if not self._catalog_silent:
+                    messagebox.showerror("加载失败", msg.text)
         if worker.running:
             self.after(_POLL_MS, self._poll_catalog)
         else:

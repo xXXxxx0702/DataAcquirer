@@ -11,7 +11,7 @@ Supports:
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from typing import List
 
 from ..config import PointSpec
@@ -45,7 +45,8 @@ class PointsTable(ttk.Frame):
         ttk.Button(toolbar, text="添加", command=self.add_row).pack(side="left")
         ttk.Button(toolbar, text="复制选中", command=self.duplicate_selected).pack(side="left", padx=4)
         ttk.Button(toolbar, text="删除选中", command=self.remove_selected).pack(side="left")
-        ttk.Button(toolbar, text="从剪贴板粘贴", command=self.paste_from_clipboard).pack(side="left", padx=4)
+        ttk.Button(toolbar, text="清空", command=self.clear).pack(side="left", padx=4)
+        ttk.Button(toolbar, text="从剪贴板粘贴", command=self.paste_from_clipboard).pack(side="left")
         ttk.Label(
             toolbar,
             text="（双击点位单元格可输入并联想匹配；点击“启用”列切换；粘贴格式：点位,类型,备注）",
@@ -111,6 +112,14 @@ class PointsTable(ttk.Frame):
     def remove_selected(self) -> None:
         for item in self.tree.selection():
             self.tree.delete(item)
+
+    def clear(self) -> None:
+        children = self.tree.get_children()
+        if not children:
+            return
+        if messagebox.askyesno("清空点位", f"确定要清空全部 {len(children)} 个点位吗？"):
+            self._close_editor()
+            self.tree.delete(*children)
 
     def paste_from_clipboard(self) -> None:
         try:

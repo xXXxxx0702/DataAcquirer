@@ -10,7 +10,9 @@ env/
 output/
 *.csv
 
-# User presets (keep the example, ignore the rest)
+# Last-session config (restored on startup), server bookmarks, and user presets
+config/last_session.json
+config/bookmarks.json
 config/presets/*.json
 !config/presets/example.json
 
