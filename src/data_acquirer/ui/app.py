@@ -469,6 +469,8 @@ class App(ttk.Frame):
             cfg = AcquireConfig.load(path)
             self._load_into_widgets(cfg)
             self._append_log(f"配置已载入: {path}")
+            # 载入后自动测试连接（成功则自动刷新点位目录、启用联想）
+            self._start_conn_test(silent=True, force=True)
         except Exception as exc:
             messagebox.showerror("载入失败", str(exc))
 
