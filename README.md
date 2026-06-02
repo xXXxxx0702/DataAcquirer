@@ -44,6 +44,11 @@ pip install -r requirements.txt
 
 ## 运行
 
+**最简单：双击 `启动.bat`。** 它会自动检测 Python、首次运行时自动安装依赖，
+然后以无终端窗口的方式启动图形界面。
+
+也可以用命令行：
+
 ```powershell
 python run.py
 ```
@@ -59,6 +64,7 @@ data-acquirer        # 或 python -m data_acquirer
 
 ```
 DataAcquirer/
+├── 启动.bat                     # 双击启动（自动装依赖 + 无终端启动 GUI）
 ├── run.py                       # 启动入口
 ├── pyproject.toml               # 打包/依赖元数据
 ├── requirements.txt
