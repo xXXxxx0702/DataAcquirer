@@ -32,7 +32,13 @@ _POLL_MS = 100
 CONNECTION_KEYS = ("host", "port", "username", "password", "database")
 
 # Time quick-range buttons: (label, days-back-from-now).
-RECENT_RANGES = (("近1天", 1), ("近2天", 2), ("近7天", 7), ("近14天", 14), ("近30天", 30))
+RECENT_RANGES = (
+    ("近1天", 1),
+    ("近2天", 2),
+    ("近7天", 7),
+    ("近14天", 14),
+    ("近30天", 30),
+)
 _TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
 
@@ -47,10 +53,10 @@ class App(ttk.Frame):
         self._catalog_worker: CatalogWorker | None = None
 
         self.bookmarks = BookmarkStore(BOOKMARKS_PATH)
-        self._conn_silent = False            # current test suppresses popups?
-        self._catalog_silent = False         # current catalog load suppresses popups?
+        self._conn_silent = False  # current test suppresses popups?
+        self._catalog_silent = False  # current catalog load suppresses popups?
         self._last_conn_signature: tuple | None = None  # last connection we tested
-        self._retest_after_id: str | None = None        # debounce handle
+        self._retest_after_id: str | None = None  # debounce handle
 
         self._startup_note = ""
         self._build_widgets()
@@ -84,7 +90,9 @@ class App(ttk.Frame):
         self.conn_status.grid(row=1, column=5, sticky="w", padx=4)
 
         # Server bookmarks row.
-        ttk.Label(conn, text="服务器书签").grid(row=2, column=0, sticky="e", padx=(4, 2), pady=(6, 2))
+        ttk.Label(conn, text="服务器书签").grid(
+            row=2, column=0, sticky="e", padx=(4, 2), pady=(6, 2)
+        )
         self.bookmark_var = tk.StringVar()
         self.bookmark_combo = ttk.Combobox(
             conn, textvariable=self.bookmark_var, state="readonly", width=28
@@ -122,12 +130,14 @@ class App(ttk.Frame):
         ttk.Label(quick, text="快捷范围：").pack(side="left")
         for label, days in RECENT_RANGES:
             ttk.Button(
-                quick, text=label, width=7,
+                quick,
+                text=label,
+                width=7,
                 command=lambda d=days: self._set_recent_days(d),
             ).pack(side="left", padx=2)
-        ttk.Label(quick, text="（结束=当前时间，开始=往前推 N 天）", foreground="#666").pack(
-            side="left", padx=6
-        )
+        ttk.Label(
+            quick, text="（结束=当前时间，开始=往前推 N 天）", foreground="#666"
+        ).pack(side="left", padx=6)
 
         # --- Points ---
         pf = ttk.LabelFrame(self, text="点位列表", padding=8)
@@ -135,9 +145,13 @@ class App(ttk.Frame):
 
         catbar = ttk.Frame(pf)
         catbar.pack(fill="x", pady=(0, 6))
-        self.catalog_btn = ttk.Button(catbar, text="刷新点位目录", command=self.on_load_catalog)
+        self.catalog_btn = ttk.Button(
+            catbar, text="刷新点位目录", command=self.on_load_catalog
+        )
         self.catalog_btn.pack(side="left")
-        self.catalog_label = ttk.Label(catbar, text="连接成功后将自动加载点位目录以启用联想", foreground="#666")
+        self.catalog_label = ttk.Label(
+            catbar, text="连接成功后将自动加载点位目录以启用联想", foreground="#666"
+        )
         self.catalog_label.pack(side="left", padx=8)
 
         self.points_table = PointsTable(pf)
@@ -156,10 +170,16 @@ class App(ttk.Frame):
         actions.pack(fill="x", pady=(8, 0))
         self.start_btn = ttk.Button(actions, text="开始拉取", command=self.on_start)
         self.start_btn.pack(side="left")
-        self.cancel_btn = ttk.Button(actions, text="取消", command=self.on_cancel, state="disabled")
+        self.cancel_btn = ttk.Button(
+            actions, text="取消", command=self.on_cancel, state="disabled"
+        )
         self.cancel_btn.pack(side="left", padx=4)
-        ttk.Button(actions, text="保存配置…", command=self.on_save_config).pack(side="left", padx=4)
-        ttk.Button(actions, text="载入配置…", command=self.on_load_config).pack(side="left")
+        ttk.Button(actions, text="保存配置…", command=self.on_save_config).pack(
+            side="left", padx=4
+        )
+        ttk.Button(actions, text="载入配置…", command=self.on_load_config).pack(
+            side="left"
+        )
 
         self.progress = ttk.Progressbar(actions, mode="determinate", length=240)
         self.progress.pack(side="right")
@@ -175,8 +195,12 @@ class App(ttk.Frame):
         self.log.pack(side="left", fill="both", expand=True)
         log_sb.pack(side="right", fill="y")
 
-    def _add_entry(self, parent, key, label, row, col, width=20, show=None) -> ttk.Entry:
-        ttk.Label(parent, text=label).grid(row=row, column=col, sticky="e", padx=(4, 2), pady=2)
+    def _add_entry(
+        self, parent, key, label, row, col, width=20, show=None
+    ) -> ttk.Entry:
+        ttk.Label(parent, text=label).grid(
+            row=row, column=col, sticky="e", padx=(4, 2), pady=2
+        )
         var = tk.StringVar()
         self.vars[key] = var
         entry = ttk.Entry(parent, textvariable=var, width=width, show=show)
@@ -265,7 +289,9 @@ class App(ttk.Frame):
         start = now - datetime.timedelta(days=days)
         self.vars["end_time"].set(now.strftime(_TIME_FMT))
         self.vars["start_time"].set(start.strftime(_TIME_FMT))
-        self._append_log(f"时间范围已设为近 {days} 天: {self.vars['start_time'].get()} ~ {self.vars['end_time'].get()}")
+        self._append_log(
+            f"时间范围已设为近 {days} 天: {self.vars['start_time'].get()} ~ {self.vars['end_time'].get()}"
+        )
 
     # ------------------------------------------------------------------ #
     # Server bookmarks
@@ -291,8 +317,13 @@ class App(ttk.Frame):
         self._start_conn_test(silent=True, force=True)
 
     def on_save_bookmark(self) -> None:
-        default = self.bookmark_var.get() or f"{self.vars['host'].get()}:{self.vars['port'].get()}"
-        name = simpledialog.askstring("保存为书签", "书签名称：", initialvalue=default, parent=self)
+        default = (
+            self.bookmark_var.get()
+            or f"{self.vars['host'].get()}:{self.vars['port'].get()}"
+        )
+        name = simpledialog.askstring(
+            "保存为书签", "书签名称：", initialvalue=default, parent=self
+        )
         if not name:
             return
         name = name.strip()
@@ -504,7 +535,9 @@ class App(ttk.Frame):
                 self.progress_label.configure(text=f"{msg.done}/{msg.total}")
             elif isinstance(msg, DoneMsg):
                 self._append_log(f"✔ 拉取完成: {msg.rows} 行 -> {msg.output_path}")
-                messagebox.showinfo("完成", f"已保存 {msg.rows} 行到\n{msg.output_path}")
+                messagebox.showinfo(
+                    "完成", f"已保存 {msg.rows} 行到\n{msg.output_path}"
+                )
                 finished = True
             elif isinstance(msg, CancelledMsg):
                 self._append_log("已取消。")
@@ -524,7 +557,7 @@ class App(ttk.Frame):
 def main() -> None:
     root = tk.Tk()
     root.title("DataAcquirer — InfluxDB 数据拉取工具")
-    root.geometry("980x820")
+    root.geometry("980x880")
     try:
         ttk.Style().theme_use("vista")  # nicer on Windows; falls back if absent
     except tk.TclError:
