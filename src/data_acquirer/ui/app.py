@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 import datetime
 import tkinter as tk
 from pathlib import Path
@@ -31,15 +32,28 @@ _POLL_MS = 100
 # Fields that define the connection; changing any of them triggers a re-test.
 CONNECTION_KEYS = ("host", "port", "username", "password", "database")
 
-# Time quick-range buttons: (label, days-back-from-now).
+# Time quick-range buttons: (label, unit, amount). unit is "days" or "months".
 RECENT_RANGES = (
-    ("近1天", 1),
-    ("近2天", 2),
-    ("近7天", 7),
-    ("近14天", 14),
-    ("近30天", 30),
+    ("近1天", "days", 1),
+    ("近2天", "days", 2),
+    ("近7天", "days", 7),
+    ("近14天", "days", 14),
+    ("近30天", "days", 30),
+    ("近3月", "months", 3),
+    ("近6月", "months", 6),
+    ("近1年", "months", 12),
 )
 _TIME_FMT = "%Y-%m-%d %H:%M:%S"
+
+
+def _subtract_months(dt: datetime.datetime, months: int) -> datetime.datetime:
+    """Return dt shifted back by N calendar months, clamping the day to the
+    target month's last valid day (e.g. Mar 31 - 1 month -> Feb 28/29)."""
+    month_index = dt.month - 1 - months
+    year = dt.year + month_index // 12
+    month = month_index % 12 + 1
+    last_day = calendar.monthrange(year, month)[1]
+    return dt.replace(year=year, month=month, day=min(dt.day, last_day))
 
 
 class App(ttk.Frame):
@@ -128,15 +142,15 @@ class App(ttk.Frame):
         quick = ttk.Frame(tf)
         quick.grid(row=2, column=0, columnspan=8, sticky="w", pady=(6, 0))
         ttk.Label(quick, text="快捷范围：").pack(side="left")
-        for label, days in RECENT_RANGES:
+        for label, unit, amount in RECENT_RANGES:
             ttk.Button(
                 quick,
                 text=label,
                 width=7,
-                command=lambda d=days: self._set_recent_days(d),
+                command=lambda u=unit, n=amount: self._set_recent_range(u, n),
             ).pack(side="left", padx=2)
         ttk.Label(
-            quick, text="（结束=当前时间，开始=往前推 N 天）", foreground="#666"
+            quick, text="（结束=当前时间，开始=往前推对应时长）", foreground="#666"
         ).pack(side="left", padx=6)
 
         # --- Points ---
@@ -284,13 +298,18 @@ class App(ttk.Frame):
     # ------------------------------------------------------------------ #
     # Button handlers
     # ------------------------------------------------------------------ #
-    def _set_recent_days(self, days: int) -> None:
+    def _set_recent_range(self, unit: str, amount: int) -> None:
         now = datetime.datetime.now()
-        start = now - datetime.timedelta(days=days)
+        if unit == "months":
+            start = _subtract_months(now, amount)
+            desc = f"近 {amount} 个月" if amount < 12 else f"近 {amount // 12} 年"
+        else:
+            start = now - datetime.timedelta(days=amount)
+            desc = f"近 {amount} 天"
         self.vars["end_time"].set(now.strftime(_TIME_FMT))
         self.vars["start_time"].set(start.strftime(_TIME_FMT))
         self._append_log(
-            f"时间范围已设为近 {days} 天: {self.vars['start_time'].get()} ~ {self.vars['end_time'].get()}"
+            f"时间范围已设为{desc}: {self.vars['start_time'].get()} ~ {self.vars['end_time'].get()}"
         )
 
     # ------------------------------------------------------------------ #
