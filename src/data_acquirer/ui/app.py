@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import calendar
 import datetime
+import os
+import subprocess
+import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -391,6 +394,23 @@ class App(ttk.Frame):
         if path:
             self.vars["output_path"].set(path)
 
+    def _reveal_in_explorer(self, output_path: str) -> None:
+        """Open the output folder, selecting the exported file when possible."""
+        try:
+            target = Path(output_path).resolve()
+            folder = target.parent if target.parent.exists() else target
+            if sys.platform.startswith("win"):
+                if target.exists():
+                    subprocess.run(["explorer", "/select,", str(target)])
+                else:
+                    os.startfile(str(folder))  # noqa: S606
+            elif sys.platform == "darwin":
+                subprocess.run(["open", str(folder)])
+            else:
+                subprocess.run(["xdg-open", str(folder)])
+        except Exception as exc:  # opening the folder is best-effort
+            self._append_log(f"打开输出文件夹失败: {exc}")
+
     def _connection_signature(self) -> tuple:
         return tuple(str(self.vars[k].get()).strip() for k in CONNECTION_KEYS)
 
@@ -557,8 +577,10 @@ class App(ttk.Frame):
             elif isinstance(msg, DoneMsg):
                 self._append_log(f"✔ 拉取完成: {msg.rows} 行 -> {msg.output_path}")
                 messagebox.showinfo(
-                    "完成", f"已保存 {msg.rows} 行到\n{msg.output_path}"
+                    "完成",
+                    f"已保存 {msg.rows} 行到\n{msg.output_path}\n\n点击确定打开输出文件夹。",
                 )
+                self._reveal_in_explorer(msg.output_path)
                 finished = True
             elif isinstance(msg, CancelledMsg):
                 self._append_log("已取消。")
