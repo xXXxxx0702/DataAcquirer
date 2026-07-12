@@ -32,6 +32,20 @@ class PullCancelled(Exception):
     """Raised internally when the caller requests cancellation."""
 
 
+def _csv_column_labels(points: list[PointSpec]) -> dict[str, str]:
+    """Return CSV column labels enriched with operator-facing point notes.
+
+    Notes are column metadata in the wide output table, so including them in
+    the single header row keeps the CSV friendly to both Excel and ordinary
+    ``read_csv`` calls.  Internal DataFrame columns remain unchanged.
+    """
+    labels: dict[str, str] = {}
+    for point in points:
+        note = " ".join(point.note.split())
+        labels[point.name] = f"{point.name}（{note}）" if note else point.name
+    return labels
+
+
 def _disable_proxies() -> None:
     """Mirror the original script: never route InfluxDB traffic via a proxy."""
     for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
@@ -222,6 +236,15 @@ class DataPuller:
             result = result[~result.index.duplicated()]
             result.sort_index(inplace=True)
 
-        result.to_csv(out_path, encoding="utf-8-sig")
+        csv_labels = _csv_column_labels(points)
+        export_result = result.rename(columns=csv_labels)
+        export_result.to_csv(out_path, encoding="utf-8-sig")
+        exported_columns = set(result.columns)
+        noted_count = sum(
+            point.name in exported_columns and bool(point.note.strip())
+            for point in points
+        )
+        if noted_count:
+            self._log(f"CSV 表头已写入 {noted_count} 个点位备注")
         self._log(f"完成: 共 {len(result)} 行，已保存到 {out_path}")
         return result
