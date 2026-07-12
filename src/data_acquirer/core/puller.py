@@ -85,6 +85,8 @@ class DataPuller:
             self.cfg.password,
             self.cfg.database,
             proxies={"http": None, "https": None},
+            timeout=10,  # seconds per attempt; fail fast instead of hanging
+            retries=2,   # one retry for flaky networks, still snappy on dead hosts
         )
 
     # ------------------------------------------------------------------ #
@@ -107,31 +109,57 @@ class DataPuller:
     def fetch_points(self) -> dict[str, str]:
         """Discover the available points from the DB catalog.
 
-        Walks every measurement and reads the distinct values of the
-        ``measure_tag`` (``measurePoint``) tag, returning a mapping of
-        ``{point_name: measurement}`` for type-ahead suggestions in the UI.
+        Prefers a single database-wide ``SHOW TAG VALUES`` query (one server
+        round-trip); falls back to walking measurements one by one for servers
+        that reject the FROM-less form. Returns ``{point_name: measurement}``
+        for type-ahead suggestions in the UI.
         """
         client = self._client()
         try:
-            catalog: dict[str, str] = {}
-            measurements = [
-                row["name"] for row in client.query("SHOW MEASUREMENTS").get_points()
-            ]
-            for measurement in measurements:
-                self._check_cancel()
-                sql = f'SHOW TAG VALUES FROM "{measurement}" WITH KEY = "{self.cfg.measure_tag}"'
-                for row in client.query(sql).get_points():
-                    value = row.get("value")
-                    # First measurement a point appears in wins (points are
-                    # normally unique to one measurement/type).
-                    if value and value not in catalog:
-                        catalog[value] = measurement
+            try:
+                catalog = self._fetch_points_bulk(client)
+            except PullCancelled:
+                raise
+            except Exception as exc:
+                self._log(f"整库点位查询失败（{exc}），改用逐 measurement 加载…")
+                catalog = self._fetch_points_per_measurement(client)
+            measurement_count = len(set(catalog.values()))
             self._log(
-                f"已加载点位目录: {len(catalog)} 个点位，来自 {len(measurements)} 个 measurement"
+                f"已加载点位目录: {len(catalog)} 个点位，来自 {measurement_count} 个 measurement"
             )
             return catalog
         finally:
             client.close()
+
+    def _fetch_points_bulk(self, client) -> dict[str, str]:
+        """One round-trip: ``SHOW TAG VALUES`` without FROM covers all measurements."""
+        result = client.query(f'SHOW TAG VALUES WITH KEY = "{self.cfg.measure_tag}"')
+        catalog: dict[str, str] = {}
+        # ResultSet.items() yields ((measurement, tags), row-generator) pairs.
+        for (measurement, _tags), rows in result.items():
+            self._check_cancel()
+            for row in rows:
+                value = row.get("value")
+                # First measurement a point appears in wins (points are
+                # normally unique to one measurement/type).
+                if value and value not in catalog:
+                    catalog[value] = measurement
+        return catalog
+
+    def _fetch_points_per_measurement(self, client) -> dict[str, str]:
+        """Legacy fallback: one ``SHOW TAG VALUES`` query per measurement."""
+        catalog: dict[str, str] = {}
+        measurements = [
+            row["name"] for row in client.query("SHOW MEASUREMENTS").get_points()
+        ]
+        for measurement in measurements:
+            self._check_cancel()
+            sql = f'SHOW TAG VALUES FROM "{measurement}" WITH KEY = "{self.cfg.measure_tag}"'
+            for row in client.query(sql).get_points():
+                value = row.get("value")
+                if value and value not in catalog:
+                    catalog[value] = measurement
+        return catalog
 
     # ------------------------------------------------------------------ #
     def _pull_window(self, client, points: list[PointSpec], start: str, end: str) -> pd.DataFrame:
@@ -189,6 +217,20 @@ class DataPuller:
         if errors:
             raise ValueError("配置无效:\n  - " + "\n  - ".join(errors))
 
+        # Fail fast if the output file cannot be written (e.g. it is open in
+        # Excel) instead of discovering that after the whole pull has finished.
+        out_path = self.cfg.output_path
+        out_dir = os.path.dirname(out_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        try:
+            with open(out_path, "a", encoding="utf-8"):
+                pass
+        except OSError as exc:
+            raise RuntimeError(
+                f"输出文件无法写入（可能正被 Excel 等程序占用）: {out_path}\n{exc}"
+            ) from exc
+
         points = self.cfg.enabled_points()
         start_time = self.cfg.start_time
         end_time = self.cfg.end_time
@@ -222,11 +264,6 @@ class DataPuller:
                 self._progress(i, total)
         finally:
             client.close()
-
-        out_path = self.cfg.output_path
-        out_dir = os.path.dirname(out_path)
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
 
         if not all_frames:
             self._log(f"警告: 没有获取到任何数据，将写出空文件 {out_path}")

@@ -199,6 +199,9 @@ class App(ttk.Frame):
         self._catalog_silent = False  # current catalog load suppresses popups?
         self._last_conn_signature: tuple | None = None  # last connection we tested
         self._retest_after_id: str | None = None  # debounce handle
+        self._conn_pending: dict | None = None  # test requested while one is running
+        self._catalog_pending: bool | None = None  # reload requested while loading
+        self._catalog_conn_sig: tuple | None = None  # connection the load belongs to
 
         self._startup_note = ""
         self._build_widgets()
@@ -426,6 +429,13 @@ class App(ttk.Frame):
 
     def _on_close(self) -> None:
         """Persist the current config so the next launch restores it."""
+        if self._pull_worker and self._pull_worker.running:
+            if not messagebox.askyesno(
+                "退出确认",
+                "数据拉取仍在进行中，此时退出会中断拉取，"
+                "输出文件可能不完整。\n\n确定要退出吗？",
+            ):
+                return
         try:
             self._config_from_widgets().save(LAST_SESSION_PATH)
         except Exception:
@@ -628,9 +638,14 @@ class App(ttk.Frame):
         self._start_conn_test(silent=True, force=True)
 
     def _start_conn_test(self, *, silent: bool, force: bool = False) -> None:
-        if self._conn_worker and self._conn_worker.running:
-            return
         signature = self._connection_signature()
+        if signature != self._last_conn_signature:
+            # Server changed: the old autocomplete catalog no longer applies.
+            self._clear_catalog()
+        if self._conn_worker and self._conn_worker.running:
+            # Busy testing: remember the request and run it once finished.
+            self._conn_pending = {"silent": silent, "force": force}
+            return
         if not force and signature == self._last_conn_signature:
             return
         self._last_conn_signature = signature
@@ -642,11 +657,23 @@ class App(ttk.Frame):
         self._conn_worker.start()
         self.after(_POLL_MS, self._poll_conn)
 
+    def _clear_catalog(self) -> None:
+        """Drop the autocomplete catalog (it belongs to the previous server)."""
+        if self.points_table.catalog_size:
+            self.points_table.set_catalog({})
+            self._append_log("连接配置已更改，已清空旧的点位目录")
+        self.catalog_label.configure(
+            text="连接成功后将自动加载点位目录以启用联想"
+        )
+
     def on_load_catalog(self, *, silent: bool = False) -> None:
         if self._catalog_worker and self._catalog_worker.running:
+            # Busy loading: remember the request and rerun it once finished.
+            self._catalog_pending = silent
             return
         cfg = self._config_from_widgets()
         self._catalog_silent = silent
+        self._catalog_conn_sig = self._connection_signature()
         self.catalog_btn.configure(state="disabled")
         self.catalog_label.configure(text="正在加载点位目录…")
         self._append_log(f"正在从 {cfg.host}:{cfg.port}/{cfg.database} 加载点位目录…")
@@ -727,16 +754,23 @@ class App(ttk.Frame):
             if isinstance(msg, LogMsg):
                 self._append_log(msg.text)
             elif isinstance(msg, DoneMsg):
+                if self._conn_pending is not None:
+                    continue  # stale result: a newer test is queued
                 # Connection OK -> auto-load the catalog to enable autocomplete.
                 self.conn_status.configure(text="●  已连接", foreground="#2e7d32")
                 self.on_load_catalog(silent=True)
             elif isinstance(msg, ErrorMsg):
                 self._append_log(msg.text)
+                if self._conn_pending is not None:
+                    continue  # stale result: a newer test is queued
                 self.conn_status.configure(text="●  连接失败", foreground="#c62828")
                 if not self._conn_silent:
                     messagebox.showerror("连接失败", msg.text)
         if worker.running:
             self.after(_POLL_MS, self._poll_conn)
+        elif self._conn_pending is not None:
+            pending, self._conn_pending = self._conn_pending, None
+            self._start_conn_test(**pending)
 
     def _poll_catalog(self) -> None:
         worker = self._catalog_worker
@@ -746,12 +780,20 @@ class App(ttk.Frame):
             if isinstance(msg, LogMsg):
                 self._append_log(msg.text)
             elif isinstance(msg, CatalogMsg):
+                if (
+                    self._catalog_pending is not None
+                    or self._catalog_conn_sig != self._connection_signature()
+                ):
+                    self._append_log("点位目录结果已过期（连接已更改），忽略")
+                    continue
                 self.points_table.set_catalog(msg.catalog)
                 self.catalog_label.configure(
                     text=f"已加载 {len(msg.catalog)} 个点位，输入时可自动联想匹配"
                 )
             elif isinstance(msg, ErrorMsg):
                 self._append_log(msg.text)
+                if self._catalog_pending is not None:
+                    continue  # stale failure: a newer reload is queued
                 self.catalog_label.configure(text="点位目录加载失败")
                 if not self._catalog_silent:
                     messagebox.showerror("加载失败", msg.text)
@@ -759,6 +801,9 @@ class App(ttk.Frame):
             self.after(_POLL_MS, self._poll_catalog)
         else:
             self.catalog_btn.configure(state="normal")
+            if self._catalog_pending is not None:
+                silent, self._catalog_pending = self._catalog_pending, None
+                self.on_load_catalog(silent=silent)
 
     def _poll_pull(self) -> None:
         worker = self._pull_worker
@@ -794,10 +839,43 @@ class App(ttk.Frame):
             self.cancel_btn.configure(state="disabled")
 
 
+def _enable_windows_dpi_awareness() -> None:
+    """Opt in to DPI awareness so Tk renders crisply on HiDPI displays.
+
+    Must run before the Tk root window is created. No-op outside Windows.
+    """
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)  # system-DPI aware
+        except (AttributeError, OSError):
+            ctypes.windll.user32.SetProcessDPIAware()  # pre-Win8.1 fallback
+    except Exception:
+        pass  # cosmetic only — never block startup
+
+
 def main() -> None:
+    _enable_windows_dpi_awareness()
     root = tk.Tk()
+
+    # Match Tk's point-based font sizing to the real DPI, and scale the
+    # default window geometry accordingly (capped to the visible screen).
+    scale = 1.0
+    try:
+        dpi = root.winfo_fpixels("1i")
+        if dpi > 0:
+            scale = max(1.0, dpi / 96.0)
+            root.tk.call("tk", "scaling", dpi / 72.0)
+    except tk.TclError:
+        pass
+    width = min(int(980 * scale), root.winfo_screenwidth() - 40)
+    height = min(int(880 * scale), root.winfo_screenheight() - 80)
+
     root.title("DataAcquirer — InfluxDB 数据拉取工具")
-    root.geometry("980x880")
+    root.geometry(f"{width}x{height}")
     try:
         ttk.Style().theme_use("vista")  # nicer on Windows; falls back if absent
     except tk.TclError:
