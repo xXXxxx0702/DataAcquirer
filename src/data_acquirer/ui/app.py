@@ -47,6 +47,8 @@ RECENT_RANGES = (
     ("近1年", "months", 12),
 )
 _TIME_FMT = "%Y-%m-%d %H:%M:%S"
+_CUSTOM_HOURS_DEFAULT = 24
+_CUSTOM_HOURS_MAX = 24 * 365
 
 
 def _subtract_months(dt: datetime.datetime, months: int) -> datetime.datetime:
@@ -57,6 +59,129 @@ def _subtract_months(dt: datetime.datetime, months: int) -> datetime.datetime:
     month = month_index % 12 + 1
     last_day = calendar.monthrange(year, month)[1]
     return dt.replace(year=year, month=month, day=min(dt.day, last_day))
+
+
+class DateTimePicker(ttk.Frame):
+    """Compact date/time selector backed by a formatted ``StringVar``.
+
+    Each component remains directly editable while also supporting the native
+    spinbox arrows and mouse wheel.  The public value stays compatible with
+    the existing configuration format (``YYYY-MM-DD HH:MM:SS``).
+    """
+
+    def __init__(self, parent, variable: tk.StringVar) -> None:
+        super().__init__(parent)
+        self.variable = variable
+        self._syncing = False
+        self._parts = {
+            "year": tk.StringVar(),
+            "month": tk.StringVar(),
+            "day": tk.StringVar(),
+            "hour": tk.StringVar(),
+            "minute": tk.StringVar(),
+            "second": tk.StringVar(),
+        }
+
+        ttk.Label(self, text="日期").pack(side="left", padx=(0, 4))
+        self._add_part("year", 1, 9999, 5)
+        ttk.Label(self, text="-").pack(side="left")
+        self._add_part("month", 1, 12, 3)
+        ttk.Label(self, text="-").pack(side="left")
+        self._add_part("day", 1, 31, 3)
+
+        ttk.Label(self, text="时间").pack(side="left", padx=(12, 4))
+        self._add_part("hour", 0, 23, 3)
+        ttk.Label(self, text=":").pack(side="left")
+        self._add_part("minute", 0, 59, 3)
+        ttk.Label(self, text=":").pack(side="left")
+        self._add_part("second", 0, 59, 3)
+
+        self.variable.trace_add("write", self._sync_from_value)
+        if not self.variable.get():
+            self.variable.set(datetime.datetime.now().strftime(_TIME_FMT))
+        else:
+            self._sync_from_value()
+
+    def _add_part(self, name: str, minimum: int, maximum: int, width: int) -> None:
+        spinbox = ttk.Spinbox(
+            self,
+            from_=minimum,
+            to=maximum,
+            width=width,
+            textvariable=self._parts[name],
+            justify="center",
+            wrap=True,
+            command=self._sync_to_value,
+        )
+        spinbox.pack(side="left")
+        spinbox.bind("<FocusOut>", self._sync_to_value)
+        spinbox.bind("<Return>", self._sync_to_value)
+        spinbox.bind(
+            "<MouseWheel>",
+            lambda event, n=name, lo=minimum, hi=maximum: self._on_mousewheel(
+                event, n, lo, hi
+            ),
+        )
+
+    def _sync_from_value(self, *_args) -> None:
+        if self._syncing:
+            return
+        try:
+            value = datetime.datetime.strptime(self.variable.get(), _TIME_FMT)
+        except (TypeError, ValueError):
+            return
+
+        self._syncing = True
+        try:
+            values = {
+                "year": f"{value.year:04d}",
+                "month": f"{value.month:02d}",
+                "day": f"{value.day:02d}",
+                "hour": f"{value.hour:02d}",
+                "minute": f"{value.minute:02d}",
+                "second": f"{value.second:02d}",
+            }
+            for name, text in values.items():
+                self._parts[name].set(text)
+        finally:
+            self._syncing = False
+
+    def _sync_to_value(self, _event=None) -> None:
+        if self._syncing:
+            return
+        try:
+            year = min(9999, max(1, int(self._parts["year"].get())))
+            month = min(12, max(1, int(self._parts["month"].get())))
+            max_day = calendar.monthrange(year, month)[1]
+            day = min(max_day, max(1, int(self._parts["day"].get())))
+            hour = min(23, max(0, int(self._parts["hour"].get())))
+            minute = min(59, max(0, int(self._parts["minute"].get())))
+            second = min(59, max(0, int(self._parts["second"].get())))
+        except (TypeError, ValueError):
+            self._sync_from_value()
+            return
+
+        value = datetime.datetime(year, month, day, hour, minute, second)
+        self.variable.set(value.strftime(_TIME_FMT))
+        self._sync_from_value()
+
+    def _on_mousewheel(
+        self, event, name: str, minimum: int, maximum: int
+    ) -> str:
+        try:
+            current = int(self._parts[name].get())
+        except (TypeError, ValueError):
+            current = minimum
+        step = 1 if event.delta > 0 else -1
+        if current + step > maximum:
+            current = minimum
+        elif current + step < minimum:
+            current = maximum
+        else:
+            current += step
+        self._parts[name].set(str(current))
+        self._sync_to_value()
+        return "break"
 
 
 class App(ttk.Frame):
@@ -132,28 +257,75 @@ class App(ttk.Frame):
         # --- Time window & behaviour ---
         tf = ttk.LabelFrame(self, text="时间范围与行为", padding=8)
         tf.pack(fill="x", pady=(8, 0))
-        self._add_entry(tf, "start_time", "起始时间", 0, 0, width=22)
-        self._add_entry(tf, "end_time", "终止时间", 0, 2, width=22)
-        ttk.Label(tf, text="(YYYY-MM-DD HH:MM:SS)", foreground="#666").grid(
-            row=0, column=4, sticky="w", padx=4
-        )
-        self._add_entry(tf, "chunk_hours", "分段(小时)", 1, 0, width=8)
-        self._add_entry(tf, "utc_offset_hours", "UTC偏移(小时)", 1, 2, width=8)
-        self._add_entry(tf, "value_field", "取值字段", 1, 4, width=12)
-        self._add_entry(tf, "measure_tag", "点位标签", 1, 6, width=14)
+        self.time_pickers: dict[str, DateTimePicker] = {}
+        for row, (key, label) in enumerate(
+            (("start_time", "起始时间"), ("end_time", "终止时间"))
+        ):
+            ttk.Label(tf, text=label).grid(
+                row=row, column=0, sticky="e", padx=(4, 8), pady=3
+            )
+            var = tk.StringVar()
+            self.vars[key] = var
+            picker = DateTimePicker(tf, var)
+            picker.grid(row=row, column=1, columnspan=7, sticky="w", pady=3)
+            self.time_pickers[key] = picker
+
+        self._add_entry(tf, "chunk_hours", "分段(小时)", 2, 0, width=8)
+        self._add_entry(tf, "utc_offset_hours", "UTC偏移(小时)", 2, 2, width=8)
+        self._add_entry(tf, "value_field", "取值字段", 2, 4, width=12)
+        self._add_entry(tf, "measure_tag", "点位标签", 2, 6, width=14)
 
         quick = ttk.Frame(tf)
-        quick.grid(row=2, column=0, columnspan=8, sticky="w", pady=(6, 0))
-        ttk.Label(quick, text="快捷范围：").pack(side="left")
-        for label, unit, amount in RECENT_RANGES:
+        quick.grid(row=3, column=0, columnspan=8, sticky="w", pady=(7, 0))
+        ttk.Label(quick, text="快捷范围：").grid(
+            row=0, column=0, rowspan=2, sticky="ne", pady=3
+        )
+
+        quick_hours_days = ttk.Frame(quick)
+        quick_hours_days.grid(row=0, column=1, sticky="w")
+        self.recent_hours_var = tk.StringVar(value=str(_CUSTOM_HOURS_DEFAULT))
+        ttk.Label(quick_hours_days, text="近").pack(side="left", padx=(2, 0))
+        self.recent_hours_spinbox = ttk.Spinbox(
+            quick_hours_days,
+            from_=1,
+            to=_CUSTOM_HOURS_MAX,
+            width=5,
+            textvariable=self.recent_hours_var,
+            justify="center",
+            wrap=True,
+        )
+        self.recent_hours_spinbox.pack(side="left")
+        self.recent_hours_spinbox.bind("<MouseWheel>", self._on_recent_hours_wheel)
+        self.recent_hours_spinbox.bind("<Return>", self._apply_recent_hours)
+        ttk.Label(quick_hours_days, text="小时").pack(side="left", padx=(2, 4))
+        ttk.Button(
+            quick_hours_days,
+            text="应用",
+            width=5,
+            command=self._apply_recent_hours,
+        ).pack(side="left", padx=(0, 6))
+
+        for label, unit, amount in RECENT_RANGES[:5]:
             ttk.Button(
-                quick,
+                quick_hours_days,
+                text=label,
+                width=7,
+                command=lambda u=unit, n=amount: self._set_recent_range(u, n),
+            ).pack(side="left", padx=2)
+
+        quick_calendar = ttk.Frame(quick)
+        quick_calendar.grid(row=1, column=1, sticky="w", pady=(3, 0))
+        for label, unit, amount in RECENT_RANGES[5:]:
+            ttk.Button(
+                quick_calendar,
                 text=label,
                 width=7,
                 command=lambda u=unit, n=amount: self._set_recent_range(u, n),
             ).pack(side="left", padx=2)
         ttk.Label(
-            quick, text="（结束=当前时间，开始=往前推对应时长）", foreground="#666"
+            quick_calendar,
+            text="（结束=当前时间，开始=往前推对应时长）",
+            foreground="#666",
         ).pack(side="left", padx=6)
 
         # --- Points ---
@@ -301,11 +473,36 @@ class App(ttk.Frame):
     # ------------------------------------------------------------------ #
     # Button handlers
     # ------------------------------------------------------------------ #
+    def _recent_hours(self) -> int | None:
+        try:
+            hours = int(self.recent_hours_var.get())
+        except (TypeError, ValueError):
+            self.master.bell()
+            return None
+        hours = min(_CUSTOM_HOURS_MAX, max(1, hours))
+        self.recent_hours_var.set(str(hours))
+        return hours
+
+    def _on_recent_hours_wheel(self, event) -> str:
+        hours = self._recent_hours() or _CUSTOM_HOURS_DEFAULT
+        step = 1 if event.delta > 0 else -1
+        hours = min(_CUSTOM_HOURS_MAX, max(1, hours + step))
+        self.recent_hours_var.set(str(hours))
+        return "break"
+
+    def _apply_recent_hours(self, _event=None) -> None:
+        hours = self._recent_hours()
+        if hours is not None:
+            self._set_recent_range("hours", hours)
+
     def _set_recent_range(self, unit: str, amount: int) -> None:
         now = datetime.datetime.now()
         if unit == "months":
             start = _subtract_months(now, amount)
             desc = f"近 {amount} 个月" if amount < 12 else f"近 {amount // 12} 年"
+        elif unit == "hours":
+            start = now - datetime.timedelta(hours=amount)
+            desc = f"近 {amount} 小时"
         else:
             start = now - datetime.timedelta(days=amount)
             desc = f"近 {amount} 天"
