@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from ..bookmarks import BookmarkStore, ServerBookmark
 from ..config import AcquireConfig
+from ..paths import BOOKMARKS_PATH, LAST_SESSION_PATH, PRESETS_DIR
 from .points_table import PointsTable
 from .worker import (
     CancelledMsg,
@@ -26,10 +27,6 @@ from .worker import (
     PullWorker,
 )
 
-CONFIG_DIR = Path(__file__).resolve().parents[3] / "config"
-PRESETS_DIR = CONFIG_DIR / "presets"
-LAST_SESSION_PATH = CONFIG_DIR / "last_session.json"
-BOOKMARKS_PATH = CONFIG_DIR / "bookmarks.json"
 _POLL_MS = 100
 
 # Fields that define the connection; changing any of them triggers a re-test.

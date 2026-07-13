@@ -1,6 +1,8 @@
-"""Allow ``python -m data_acquirer`` to launch the GUI."""
+"""``python -m data_acquirer`` — GUI by default, CLI mode with a subcommand."""
 
-from .ui import main
+import sys
+
+from .cli import main
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

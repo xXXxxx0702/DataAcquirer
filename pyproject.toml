@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "data-acquirer"
-version = "1.0.0"
-description = "Visual InfluxDB (v1 / InfluxQL) time-series data puller"
+version = "1.1.0"
+description = "Visual & command-line InfluxDB (v1 / InfluxQL) time-series data puller"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-data-acquirer = "data_acquirer.ui:main"
+data-acquirer = "data_acquirer.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
