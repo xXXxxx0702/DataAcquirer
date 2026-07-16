@@ -46,6 +46,7 @@ RECENT_RANGES = (
 _TIME_FMT = "%Y-%m-%d %H:%M:%S"
 _CUSTOM_HOURS_DEFAULT = 24
 _CUSTOM_HOURS_MAX = 24 * 365
+_NUMBER_SPINBOX_STYLE = "Comfort.TSpinbox"
 
 
 def _subtract_months(dt: datetime.datetime, months: int) -> datetime.datetime:
@@ -78,20 +79,21 @@ class DateTimePicker(ttk.Frame):
             "minute": tk.StringVar(),
             "second": tk.StringVar(),
         }
+        self._spinboxes: dict[str, ttk.Spinbox] = {}
 
         ttk.Label(self, text="日期").pack(side="left", padx=(0, 4))
-        self._add_part("year", 1, 9999, 5)
+        self._add_part("year", 1, 9999, 7)
         ttk.Label(self, text="-").pack(side="left")
-        self._add_part("month", 1, 12, 3)
+        self._add_part("month", 1, 12, 5)
         ttk.Label(self, text="-").pack(side="left")
-        self._add_part("day", 1, 31, 3)
+        self._add_part("day", 1, 31, 5)
 
         ttk.Label(self, text="时间").pack(side="left", padx=(12, 4))
-        self._add_part("hour", 0, 23, 3)
+        self._add_part("hour", 0, 23, 5)
         ttk.Label(self, text=":").pack(side="left")
-        self._add_part("minute", 0, 59, 3)
+        self._add_part("minute", 0, 59, 5)
         ttk.Label(self, text=":").pack(side="left")
-        self._add_part("second", 0, 59, 3)
+        self._add_part("second", 0, 59, 5)
 
         self.variable.trace_add("write", self._sync_from_value)
         if not self.variable.get():
@@ -109,8 +111,10 @@ class DateTimePicker(ttk.Frame):
             justify="center",
             wrap=True,
             command=self._sync_to_value,
+            style=_NUMBER_SPINBOX_STYLE,
         )
         spinbox.pack(side="left")
+        self._spinboxes[name] = spinbox
         spinbox.bind("<FocusOut>", self._sync_to_value)
         spinbox.bind("<Return>", self._sync_to_value)
         spinbox.bind(
@@ -216,6 +220,9 @@ class App(ttk.Frame):
     def _build_widgets(self) -> None:
         self.vars: dict[str, tk.Variable] = {}
         self.entries: dict[str, ttk.Entry] = {}
+        # The Vista spinbox arrows consume part of the text area.  Explicit
+        # inner padding keeps digits clear of the arrows at Windows DPI scales.
+        ttk.Style(self).configure(_NUMBER_SPINBOX_STYLE, padding=(4, 1, 4, 1))
 
         # --- Connection ---
         conn = ttk.LabelFrame(self, text="连接配置", padding=8)
@@ -289,10 +296,11 @@ class App(ttk.Frame):
             quick_hours_days,
             from_=1,
             to=_CUSTOM_HOURS_MAX,
-            width=5,
+            width=7,
             textvariable=self.recent_hours_var,
             justify="center",
             wrap=True,
+            style=_NUMBER_SPINBOX_STYLE,
         )
         self.recent_hours_spinbox.pack(side="left")
         self.recent_hours_spinbox.bind("<MouseWheel>", self._on_recent_hours_wheel)
