@@ -886,11 +886,16 @@ def _set_window_icon(root: tk.Tk) -> None:
     try:
         if APP_ICON_PNG.exists():
             icon_image = tk.PhotoImage(file=str(APP_ICON_PNG))
+            # Set both the default for future Toplevels and this already-created
+            # root window.  Windows 11 does not consistently fall back to Tk's
+            # class-level default when rendering the title bar/taskbar.
             root.iconphoto(True, icon_image)
+            root.iconphoto(False, icon_image)
             # Tk must retain a reference for the lifetime of the window.
             root._data_acquirer_icon = icon_image
         if sys.platform.startswith("win") and APP_ICON_ICO.exists():
             root.iconbitmap(default=str(APP_ICON_ICO))
+            root.iconbitmap(str(APP_ICON_ICO))
     except (OSError, tk.TclError):
         pass  # cosmetic only — never block startup
 
