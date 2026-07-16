@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect x="64" y="64" width="896" height="896" rx="210" fill="#0B2036"/>
+  <g fill="none" stroke="#25D5D1" stroke-width="62" stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="512" cy="350" rx="290" ry="100"/>
+    <path d="M222 350v340c0 55 130 100 290 100s290-45 290-100V350"/>
+  </g>
+  <polyline points="302,555 392,555 468,480 548,650 632,535 722,535"
+            fill="none" stroke="#F7FBFF" stroke-width="48"
+            stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#F7FBFF">
+    <circle cx="392" cy="555" r="25"/>
+    <circle cx="468" cy="480" r="25"/>
+    <circle cx="548" cy="650" r="25"/>
+    <circle cx="632" cy="535" r="25"/>
+  </g>
+</svg>

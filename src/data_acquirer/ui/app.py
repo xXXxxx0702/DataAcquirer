@@ -27,6 +27,9 @@ from .worker import (
     PullWorker,
 )
 
+ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets"
+APP_ICON_PNG = ASSETS_DIR / "app_icon.png"
+APP_ICON_ICO = ASSETS_DIR / "app_icon.ico"
 _POLL_MS = 100
 
 # Fields that define the connection; changing any of them triggers a re-test.
@@ -47,6 +50,7 @@ _TIME_FMT = "%Y-%m-%d %H:%M:%S"
 _CUSTOM_HOURS_DEFAULT = 24
 _CUSTOM_HOURS_MAX = 24 * 365
 _NUMBER_SPINBOX_STYLE = "Comfort.TSpinbox"
+_WINDOWS_APP_ID = "DataAcquirer.InfluxDB.Client"
 
 
 def _subtract_months(dt: datetime.datetime, months: int) -> datetime.datetime:
@@ -862,8 +866,38 @@ def _enable_windows_dpi_awareness() -> None:
         pass  # cosmetic only — never block startup
 
 
+def _set_windows_app_id() -> None:
+    """Give the taskbar a stable identity instead of grouping under Python."""
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+
+        set_app_id = ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID
+        set_app_id.argtypes = [ctypes.c_wchar_p]
+        set_app_id.restype = ctypes.c_long
+        set_app_id(_WINDOWS_APP_ID)
+    except Exception:
+        pass  # cosmetic only — never block startup
+
+
+def _set_window_icon(root: tk.Tk) -> None:
+    """Apply the bundled icon to the window chrome and taskbar."""
+    try:
+        if APP_ICON_PNG.exists():
+            icon_image = tk.PhotoImage(file=str(APP_ICON_PNG))
+            root.iconphoto(True, icon_image)
+            # Tk must retain a reference for the lifetime of the window.
+            root._data_acquirer_icon = icon_image
+        if sys.platform.startswith("win") and APP_ICON_ICO.exists():
+            root.iconbitmap(default=str(APP_ICON_ICO))
+    except (OSError, tk.TclError):
+        pass  # cosmetic only — never block startup
+
+
 def main() -> None:
     _enable_windows_dpi_awareness()
+    _set_windows_app_id()
     root = tk.Tk()
 
     # Match Tk's point-based font sizing to the real DPI, and scale the
@@ -880,6 +914,7 @@ def main() -> None:
     height = min(int(880 * scale), root.winfo_screenheight() - 80)
 
     root.title("DataAcquirer — InfluxDB 数据拉取工具")
+    _set_window_icon(root)
     root.geometry(f"{width}x{height}")
     try:
         ttk.Style().theme_use("vista")  # nicer on Windows; falls back if absent
