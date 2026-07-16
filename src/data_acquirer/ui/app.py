@@ -884,19 +884,79 @@ def _set_windows_app_id() -> None:
 def _set_window_icon(root: tk.Tk) -> None:
     """Apply the bundled icon to the window chrome and taskbar."""
     try:
-        if APP_ICON_PNG.exists():
+        if sys.platform.startswith("win") and APP_ICON_ICO.exists():
+            # Tk's default lets future Toplevels inherit the application icon.
+            # The mapped root gets DPI-specific handles in the idle callback.
+            root.iconbitmap(default=str(APP_ICON_ICO))
+            root.iconbitmap(str(APP_ICON_ICO))
+            root.after_idle(lambda: _set_windows_window_icons(root))
+        elif APP_ICON_PNG.exists():
             icon_image = tk.PhotoImage(file=str(APP_ICON_PNG))
-            # Set both the default for future Toplevels and this already-created
-            # root window.  Windows 11 does not consistently fall back to Tk's
-            # class-level default when rendering the title bar/taskbar.
             root.iconphoto(True, icon_image)
             root.iconphoto(False, icon_image)
             # Tk must retain a reference for the lifetime of the window.
             root._data_acquirer_icon = icon_image
-        if sys.platform.startswith("win") and APP_ICON_ICO.exists():
-            root.iconbitmap(default=str(APP_ICON_ICO))
-            root.iconbitmap(str(APP_ICON_ICO))
-    except (OSError, tk.TclError):
+    except Exception:
+        pass  # cosmetic only — never block startup
+
+
+def _set_windows_window_icons(root: tk.Tk) -> None:
+    """Bind separate DPI-sized ICO frames to the current Win32 window."""
+    if not sys.platform.startswith("win") or not APP_ICON_ICO.exists():
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.GetAncestor.restype = wintypes.HWND
+        user32.LoadImageW.argtypes = [
+            wintypes.HINSTANCE,
+            wintypes.LPCWSTR,
+            wintypes.UINT,
+            ctypes.c_int,
+            ctypes.c_int,
+            wintypes.UINT,
+        ]
+        user32.LoadImageW.restype = wintypes.HANDLE
+        user32.SendMessageW.argtypes = [
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+        ]
+        user32.SendMessageW.restype = ctypes.c_ssize_t
+
+        hwnd = user32.GetAncestor(root.winfo_id(), 2) or root.winfo_id()
+        image_icon = 1
+        load_from_file = 0x0010
+        small_width = user32.GetSystemMetrics(49)
+        small_height = user32.GetSystemMetrics(50)
+        large_width = user32.GetSystemMetrics(11)
+        large_height = user32.GetSystemMetrics(12)
+        small_icon = user32.LoadImageW(
+            None,
+            str(APP_ICON_ICO),
+            image_icon,
+            small_width,
+            small_height,
+            load_from_file,
+        )
+        large_icon = user32.LoadImageW(
+            None,
+            str(APP_ICON_ICO),
+            image_icon,
+            large_width,
+            large_height,
+            load_from_file,
+        )
+        if small_icon:
+            user32.SendMessageW(hwnd, 0x0080, 0, small_icon)  # WM_SETICON / small
+        if large_icon:
+            user32.SendMessageW(hwnd, 0x0080, 1, large_icon)  # WM_SETICON / big
+        root._windows_icon_handles = (small_icon, large_icon)
+    except Exception:
         pass  # cosmetic only — never block startup
 
 

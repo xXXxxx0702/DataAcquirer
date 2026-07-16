@@ -20,6 +20,7 @@ SUPERSAMPLE = 4
 NAVY = "#0B2036"
 CYAN = "#25D5D1"
 WHITE = "#F7FBFF"
+ICO_SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 256)
 
 
 def _scaled(value: float) -> int:
@@ -97,6 +98,84 @@ def _draw_icon() -> Image.Image:
     return image.resize((SOURCE_SIZE, SOURCE_SIZE), Image.Resampling.LANCZOS)
 
 
+def _draw_small_icon(size: int) -> Image.Image:
+    """Draw a pixel-fitted frame instead of shrinking the 1024 px artwork.
+
+    Windows commonly requests 16–48 px icons depending on display scaling.
+    Native integer coordinates keep the one- and two-pixel strokes crisp.
+    """
+    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+
+    margin = max(1, round(size * 0.0625))
+    draw.rounded_rectangle(
+        (margin, margin, size - 1 - margin, size - 1 - margin),
+        radius=max(2, round(size * 0.205)),
+        fill=NAVY,
+    )
+
+    left = round(size * 0.22)
+    right = round(size * 0.78)
+    top = round(size * 0.25)
+    ellipse_bottom = round(size * 0.45)
+    side_start = round(size * 0.35)
+    side_end = round(size * 0.69)
+    bottom_top = round(size * 0.59)
+    bottom_end = round(size * 0.79)
+    database_stroke = max(1, round(size * 0.07))
+
+    draw.ellipse(
+        (left, top, right, ellipse_bottom),
+        outline=CYAN,
+        width=database_stroke,
+    )
+    draw.line(
+        ((left, side_start), (left, side_end)),
+        fill=CYAN,
+        width=database_stroke,
+    )
+    draw.line(
+        ((right, side_start), (right, side_end)),
+        fill=CYAN,
+        width=database_stroke,
+    )
+    draw.arc(
+        (left, bottom_top, right, bottom_end),
+        start=0,
+        end=180,
+        fill=CYAN,
+        width=database_stroke,
+    )
+
+    waveform = [
+        (round(size * x), round(size * y))
+        for x, y in (
+            (0.30, 0.555),
+            (0.39, 0.555),
+            (0.47, 0.48),
+            (0.55, 0.65),
+            (0.63, 0.535),
+            (0.72, 0.535),
+        )
+    ]
+    draw.line(
+        waveform,
+        fill=WHITE,
+        width=max(1, round(size * 0.05)),
+        joint="curve",
+    )
+    return image
+
+
+def _ico_frames(icon: Image.Image) -> list[Image.Image]:
+    return [
+        _draw_small_icon(size)
+        if size <= 48
+        else icon.resize((size, size), Image.Resampling.LANCZOS)
+        for size in ICO_SIZES
+    ]
+
+
 def _svg_source() -> str:
     return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <rect x="64" y="64" width="896" height="896" rx="210" fill="{NAVY}"/>
@@ -121,20 +200,12 @@ def main() -> None:
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
     icon = _draw_icon()
     icon.save(ASSET_DIR / "app_icon.png", optimize=True)
-    icon.save(
+    ico_frames = _ico_frames(icon)
+    ico_frames[-1].save(
         ASSET_DIR / "app_icon.ico",
         format="ICO",
-        sizes=[
-            (16, 16),
-            (20, 20),
-            (24, 24),
-            (32, 32),
-            (40, 40),
-            (48, 48),
-            (64, 64),
-            (128, 128),
-            (256, 256),
-        ],
+        sizes=[(size, size) for size in ICO_SIZES],
+        append_images=ico_frames[:-1],
     )
     (ASSET_DIR / "app_icon.svg").write_text(_svg_source(), encoding="utf-8")
     print(f"Generated icon assets in {ASSET_DIR}")
