@@ -30,6 +30,14 @@ class ProgressMsg:
 
 
 @dataclass
+class SegmentMsg:
+    current: int
+    total: int
+    start: str
+    end: str
+
+
+@dataclass
 class DoneMsg:
     rows: int
     output_path: str
@@ -77,6 +85,9 @@ class PullWorker:
             self.config,
             log=lambda msg: self.queue.put(LogMsg(msg)),
             progress=lambda done, total: self.queue.put(ProgressMsg(done, total)),
+            segment=lambda current, total, start, end: self.queue.put(
+                SegmentMsg(current, total, start, end)
+            ),
             is_cancelled=self._cancel.is_set,
         )
         try:

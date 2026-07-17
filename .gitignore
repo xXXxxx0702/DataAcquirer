@@ -13,6 +13,7 @@ output/
 # Last-session config (restored on startup), server bookmarks, and user presets
 config/last_session.json
 config/bookmarks.json
+config/run_history.json
 config/presets/*.json
 !config/presets/example.json
 

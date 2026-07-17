@@ -23,8 +23,11 @@ import pandas as pd
 
 from ..config import AcquireConfig, PointSpec
 
-# Progress / log callbacks. ``progress(done, total)`` and ``log(message)``.
+# Progress / log callbacks. ``progress(done, total)`` reports completed
+# windows, while ``segment(current, total, start, end)`` announces the window
+# that is about to run.
 ProgressCb = Callable[[int, int], None]
+SegmentCb = Callable[[int, int, str, str], None]
 LogCb = Callable[[str], None]
 
 
@@ -60,11 +63,13 @@ class DataPuller:
         *,
         log: Optional[LogCb] = None,
         progress: Optional[ProgressCb] = None,
+        segment: Optional[SegmentCb] = None,
         is_cancelled: Optional[Callable[[], bool]] = None,
     ) -> None:
         self.cfg = config
         self._log = log or (lambda msg: None)
         self._progress = progress or (lambda done, total: None)
+        self._segment = segment or (lambda current, total, start, end: None)
         self._is_cancelled = is_cancelled or (lambda: False)
 
     # ------------------------------------------------------------------ #
@@ -256,6 +261,7 @@ class DataPuller:
         try:
             for i, (win_start, win_end) in enumerate(boundaries, start=1):
                 self._check_cancel()
+                self._segment(i, total, win_start, win_end)
                 self._log(f"[{i}/{total}] {win_start}  ->  {win_end}")
                 df = self._pull_window(client, points, win_start, win_end)
                 if not df.empty:
